@@ -2,48 +2,80 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta, date as date_type
+from datetime import datetime, date as date_type
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DATA PROVIDER COMPARISON — yfinance vs Polygon.io (now Massive.com)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# ┌──────────────────────┬──────────────────────────┬────────────────────────────┐
+# │ Feature              │ yfinance (FREE)          │ Polygon/Massive (FREE)     │
+# ├──────────────────────┼──────────────────────────┼────────────────────────────┤
+# │ Cost                 │ $0 (unofficial Yahoo)    │ $0 (free tier)             │
+# │ Rate limit           │ ~2000/hr (unofficial)    │ 5 calls/minute             │
+# │ Fundamentals (P/E,   │ ✅ YES — full access     │ ❌ NO — requires $199/mo   │
+# │   EPS, margins, etc) │   (all via .info dict)   │   (Advanced plan) or $29   │
+# │                      │                          │   add-on for Financials    │
+# │ Historical prices    │ ✅ Full history           │ ✅ 2 years (free)          │
+# │ Real-time prices     │ ❌ 15-min delayed         │ ❌ End-of-day only (free)  │
+# │ Options chains       │ ✅ YES — free             │ ❌ Requires paid plan      │
+# │ Analyst targets      │ ✅ YES — free             │ ❌ Requires paid plan      │
+# │ Earnings dates       │ ✅ YES — free             │ ❌ Requires paid plan      │
+# │ Technical indicators │ ❌ Calculate yourself     │ ✅ Built-in (SMA,EMA,RSI)  │
+# │ Reliability          │ ⚠️ Can break (unofficial)│ ✅ Stable (official API)   │
+# │ API key needed       │ No                       │ Yes (free signup)          │
+# └──────────────────────┴──────────────────────────┴────────────────────────────┘
+#
+# VERDICT FOR THIS DASHBOARD:
+# → yfinance is BETTER for free tier because this dashboard is fundamentals-heavy.
+#   Polygon's free tier has NO fundamentals data (P/E, EPS, margins, analyst targets,
+#   options chains). You'd need the $199/mo Advanced plan to match what yfinance
+#   gives for free.
+# → Polygon is better for PRICE DATA reliability and speed, but on the free tier
+#   you only get 5 calls/minute and end-of-day data.
+# → RECOMMENDATION: Stay on yfinance. Switch to Polygon only if you upgrade to
+#   a paid plan ($29/mo minimum for financials, $199/mo for everything).
+#
+# ── TO SWITCH TO POLYGON: ──
+# 1. pip install polygon-api-client
+# 2. Set USE_POLYGON = True below
+# 3. Set your API key in POLYGON_API_KEY
+# 4. Note: only price data will come from Polygon on free tier.
+#    Fundamentals will still fall back to yfinance.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ← SET TO True TO USE POLYGON FOR PRICE DATA (requires API key) →
+USE_POLYGON = False
+# ← PASTE YOUR POLYGON / MASSIVE API KEY HERE →
+POLYGON_API_KEY = "YOUR_API_KEY_HERE"
 
 st.set_page_config(page_title="MATUMBRO QUANT", page_icon="🪝", layout="wide", initial_sidebar_state="collapsed")
+if "tk" not in st.session_state: st.session_state.tk="NVDA"
 
-if "tk" not in st.session_state:
-    st.session_state.tk = "NVDA"
+# ──── WATCHLIST: Stocks first, then index separator ────
+QUICK_STOCKS=["MU","NVDA","GOOG","AVGO","ORCL","NBIS","TSM","SNDK","TSEM","LITE","COHR","MRVL","AXTI","AAOI","GEV"]
+QUICK_INDEX=["SPX","QQQ","SPY","VOO"]  # Index / ETF group
 
-QUICK_TICKERS = ["NVDA","GOOG","AVGO","ORCL","QQQ","MU","MRVL","COHR","TSEM","LITE","NBIS"]
-PUDGE = "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/pudge.png"
-DOMAINS = {
-    "AAPL":"apple.com","MSFT":"microsoft.com","GOOGL":"google.com","GOOG":"google.com",
-    "AMZN":"amazon.com","NVDA":"nvidia.com","META":"meta.com","TSLA":"tesla.com",
-    "AVGO":"broadcom.com","NFLX":"netflix.com","AMD":"amd.com","ADBE":"adobe.com",
-    "QCOM":"qualcomm.com","INTC":"intel.com","TXN":"ti.com","AMAT":"appliedmaterials.com",
-    "MU":"micron.com","LRCX":"lamresearch.com","KLAC":"kla.com","MRVL":"marvell.com",
-    "ON":"onsemi.com","SMCI":"supermicro.com","CRWD":"crowdstrike.com",
-    "PANW":"paloaltonetworks.com","DDOG":"datadoghq.com","NET":"cloudflare.com",
-    "SNOW":"snowflake.com","PLTR":"palantir.com","COIN":"coinbase.com","ABNB":"airbnb.com",
-    "UBER":"uber.com","PYPL":"paypal.com","SHOP":"shopify.com","ARM":"arm.com",
-    "NBIS":"nebius.com","COHR":"coherent.com","LITE":"lumentum.com","AAOI":"ao-inc.com",
-    "QQQ":"invesco.com","SOFI":"sofi.com","HOOD":"robinhood.com","RIVN":"rivian.com",
-    "TSEM":"towersemi.com","SMH":"vaneck.com","SOXX":"ishares.com","COST":"costco.com",
-    "MELI":"mercadolibre.com","ORCL":"oracle.com",
-}
+RAIGOR="https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/earthshaker.png"
+DOMAINS={"AAPL":"apple.com","MSFT":"microsoft.com","GOOGL":"google.com","GOOG":"google.com","AMZN":"amazon.com","NVDA":"nvidia.com","META":"meta.com","TSLA":"tesla.com","AVGO":"broadcom.com","NFLX":"netflix.com","AMD":"amd.com","ADBE":"adobe.com","QCOM":"qualcomm.com","INTC":"intel.com","MU":"micron.com","MRVL":"marvell.com","SMCI":"supermicro.com","CRWD":"crowdstrike.com","PANW":"paloaltonetworks.com","NET":"cloudflare.com","PLTR":"palantir.com","COIN":"coinbase.com","ARM":"arm.com","NBIS":"nebius.com","COHR":"coherent.com","LITE":"lumentum.com","QQQ":"invesco.com","TSEM":"towersemi.com","ORCL":"oracle.com","SOFI":"sofi.com","HOOD":"robinhood.com","ASML":"asml.com","AWWE":"awwe.com","SPY":"ssga.com","VOO":"vanguard.com","SPX":"spglobal.com"}
+US_TOP=["AAPL","MSFT","GOOGL","GOOG","AMZN","NVDA","META","TSLA","AVGO","NFLX","AMD","ADBE","QCOM","INTC","TXN","AMAT","MU","LRCX","KLAC","MRVL","ON","SMCI","CRWD","PANW","DDOG","NET","SNOW","PLTR","COIN","ABNB","UBER","PYPL","SHOP","ARM","NBIS","COHR","LITE","AAOI","QQQ","SOFI","HOOD","RIVN","TSEM","SMH","SOXX","COST","MELI","ORCL","V","MA","JPM","BAC","WFC","GS","MS","UNH","JNJ","PG","HD","DIS","CRM","IBM","NOW","INTU","ISRG","LLY","PFE","MRK","ABBV","BA","RTX","LMT","GE","CAT","DE","HON","UPS","FDX","XOM","CVX","COP","SLB","NEE","SPY","IWM","DIA","VOO","VTI","ASML","AWWE","SPX","TSM","SNDK","AXTI"]
 
 def _wl_cb():
-    v=st.session_state.get("wl_radio",""); t=v.replace("$","").strip()
+    v=st.session_state.get("wl_radio","");t=v.replace("$","").strip()
     if t: st.session_state.tk=t
-
+def _wl_idx_cb():
+    v=st.session_state.get("wl_idx_radio","");t=v.replace("$","").strip()
+    if t: st.session_state.tk=t
 def _sr_cb():
     v=st.session_state.get("srch","").upper().strip()
     if not v: return
     try:
-        test=yf.Ticker(v); info=test.info
-        if info and (info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose")):
-            st.session_state.tk=v
+        t=yf.Ticker(v);i=t.info
+        if i and (i.get("currentPrice") or i.get("regularMarketPrice") or i.get("previousClose")): st.session_state.tk=v
     except: pass
-
 def get_logo(t):
     dm=DOMAINS.get(t,f"{t.lower()}.com")
     return f"https://www.google.com/s2/favicons?domain={dm}&sz=128"
-
 def fmt(v,s="n",d=2):
     if v is None or (isinstance(v,float) and pd.isna(v)): return "—"
     if s=="$":
@@ -55,7 +87,6 @@ def fmt(v,s="n",d=2):
     if s=="x": return f"{v:.{d}f}x"
     if s=="p": return f"${v:,.{d}f}"
     return f"{v:,.{d}f}"
-
 def sdate(v):
     if v is None: return None
     if isinstance(v,date_type) and not isinstance(v,datetime): return v
@@ -75,20 +106,26 @@ def fetch(ticker):
     d["avg_vol"]=i.get("averageVolume")
     d["52h"]=i.get("fiftyTwoWeekHigh");d["52l"]=i.get("fiftyTwoWeekLow")
     d["50ma"]=i.get("fiftyDayAverage");d["200ma"]=i.get("twoHundredDayAverage")
+    # Beta from yfinance is 5-year monthly vs S&P 500
     d["beta"]=i.get("beta")
     d["chg"]=0;d["chg_pct"]=0
-    if d["price"] and d["prev"]: d["chg"]=d["price"]-d["prev"]; d["chg_pct"]=d["chg"]/d["prev"]
-    d["mcap"]=i.get("marketCap");d["pe_t"]=i.get("trailingPE");d["pe_f"]=i.get("forwardPE")
-    d["peg"]=i.get("pegRatio");d["ps"]=i.get("priceToSalesTrailing12Months")
-    d["pb"]=i.get("priceToBook");d["ev_ebitda"]=i.get("enterpriseToEbitda")
+    if d["price"] and d["prev"]: d["chg"]=d["price"]-d["prev"];d["chg_pct"]=d["chg"]/d["prev"]
+    d["mcap"]=i.get("marketCap")
+    d["pe"]=i.get("trailingPE")  # P/E = trailingPE (same as trailing, shown as headline)
+    d["pe_t"]=i.get("trailingPE");d["pe_f"]=i.get("forwardPE")
+    d["peg"]=i.get("pegRatio")  # PEG ratio from Yahoo Finance
+    d["de"]=i.get("debtToEquity")  # Debt/Equity ratio (percentage, e.g. 35 = 35%)
+    d["ev_ebitda"]=i.get("enterpriseToEbitda")
     d["rev_g"]=i.get("revenueGrowth");d["gm"]=i.get("grossMargins")
     d["om"]=i.get("operatingMargins");d["pm"]=i.get("profitMargins")
     d["eps_t"]=i.get("trailingEps");d["eps_f"]=i.get("forwardEps")
+    d["fcf"]=i.get("freeCashflow")
     d["roe"]=i.get("returnOnEquity");d["roa"]=i.get("returnOnAssets")
     d["short_pct"]=i.get("shortPercentOfFloat")
     d["tgt_mean"]=i.get("targetMeanPrice");d["tgt_high"]=i.get("targetHighPrice")
     d["tgt_low"]=i.get("targetLowPrice")
     d["rec"]=i.get("recommendationKey","—").upper();d["n_a"]=i.get("numberOfAnalystOpinions")
+    d["fcf_y"]=(d["fcf"]/d["mcap"]) if d.get("fcf") and d.get("mcap") and d["mcap"]>0 else None
     d["earn_date"]=None
     try:
         cal=stk.calendar
@@ -104,6 +141,38 @@ def fetch(ticker):
                 d["earn_date"]=sdate(fut.index[0]) if len(fut)>0 else sdate(edf.index[0])
         except: pass
     return d
+
+@st.cache_data(ttl=3600)
+def fetch_technicals(ticker):
+    """Calculate RSI, MACD, Stochastic, 20MA from price history."""
+    try:
+        h=yf.Ticker(ticker).history(period="6mo")
+        if h is None or len(h)<30: return {}
+        close=h["Close"]
+        r={}
+        # RSI 14
+        delta=close.diff()
+        gain=delta.where(delta>0,0).rolling(14).mean()
+        loss=(-delta.where(delta<0,0)).rolling(14).mean()
+        rs=gain/loss; r["rsi"]=round((100-(100/(1+rs))).iloc[-1],1)
+        # MACD (12,26,9)
+        ema12=close.ewm(span=12).mean()
+        ema26=close.ewm(span=26).mean()
+        macd_line=ema12-ema26
+        signal=macd_line.ewm(span=9).mean()
+        r["macd"]=round(macd_line.iloc[-1],2)
+        r["macd_signal"]=round(signal.iloc[-1],2)
+        r["macd_hist"]=round((macd_line-signal).iloc[-1],2)
+        # Stochastic %K (14,3)
+        low14=h["Low"].rolling(14).min()
+        high14=h["High"].rolling(14).max()
+        k=((close-low14)/(high14-low14))*100
+        r["stoch_k"]=round(k.iloc[-1],1)
+        r["stoch_d"]=round(k.rolling(3).mean().iloc[-1],1)
+        # 20 MA
+        r["20ma"]=round(close.rolling(20).mean().iloc[-1],2)
+        return r
+    except: return {}
 
 @st.cache_data(ttl=600)
 def fetch_opts(ticker):
@@ -139,62 +208,96 @@ def fetch_opts(ticker):
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700;800&display=swap');
-    :root{--jm:'JetBrains Mono',monospace;--sg:'Space Grotesk',sans-serif}
+    :root{--jm:'JetBrains Mono',monospace;--sg:'Space Grotesk',sans-serif;--bg:#0a0f1a;--card:#0d1520;--border:#1a2535;--txt:#e2e8f0;--dim:#4a6080}
+    :root,.stApp{color-scheme:dark!important;background:var(--bg)!important;color:var(--txt)!important}
     .stApp{font-family:var(--sg)}
     .block-container{padding-top:0.1rem!important;padding-bottom:0!important;max-width:100%!important}
     header[data-testid="stHeader"]{display:none!important}
-    div[data-testid="stHorizontalBlock"]{gap:0.2rem!important}
+    div[data-testid="stHorizontalBlock"]{gap:0.6rem!important}
     div[data-testid="stVerticalBlock"]{gap:0.04rem!important}
-    div[data-testid="stMetric"]{background:#0d1520;border:1px solid #1e293b;border-radius:5px;padding:3px 6px!important}
+    div[data-testid="stMetric"]{background:var(--card);border:1px solid var(--border);border-radius:5px;padding:3px 6px!important}
     div[data-testid="stMetric"]:hover{border-color:#3b82f6}
     div[data-testid="stMetric"] label{color:#536580!important;font-family:var(--jm)!important;font-size:0.46rem!important;text-transform:uppercase;min-height:0!important;padding:0!important;margin:0!important;line-height:1!important}
-    div[data-testid="stMetric"] div[data-testid="stMetricValue"]{color:#e2e8f0!important;font-family:var(--jm)!important;font-weight:600!important;font-size:0.7rem!important;line-height:1.15!important}
+    div[data-testid="stMetric"] div[data-testid="stMetricValue"]{color:var(--txt)!important;font-family:var(--jm)!important;font-weight:600!important;font-size:0.7rem!important;line-height:1.15!important}
     div[data-testid="stMetric"] div[data-testid="stMetricDelta"]{font-family:var(--jm)!important;font-size:0.5rem!important}
     .ot{width:100%;border-collapse:collapse;font-family:var(--jm);font-size:0.56rem}
-    .ot th{color:#4a6080;text-transform:uppercase;font-size:0.44rem;padding:2px 4px;border-bottom:1px solid #1e293b;text-align:left}
+    .ot th{color:var(--dim);text-transform:uppercase;font-size:0.44rem;padding:2px 4px;border-bottom:1px solid var(--border);text-align:left}
     .ot td{color:#d0d8e4;padding:2px 4px;border-bottom:1px solid #111827}
     .ot .fl{color:#f97316;font-weight:700}.ot .ca{color:#22c55e}.ot .pu{color:#ef4444}
+    /* ← ADJUST WATCHLIST BOX: font-size=text, padding=height, min-height/height=fixed box height → */
+    /* Both stock and index watchlists use identical sizing via this global rule */
     div[data-testid="stRadio"]>label{display:none!important}
-    div[data-testid="stRadio"] div[role="radiogroup"]{gap:1px!important}
-    div[data-testid="stRadio"] div[role="radiogroup"] label{font-family:var(--jm)!important;font-size:0.62rem!important;font-weight:700!important;padding:5px 0!important;background:#0d1520;border:1px solid #1a2535;border-radius:4px;justify-content:center;min-height:0!important;color:#7a8fa5!important}
+    div[data-testid="stRadio"] div[role="radiogroup"]{gap:1px!important;width:100%!important}
+    div[data-testid="stRadio"] div[role="radiogroup"] label{font-family:var(--jm)!important;font-size:0.6rem!important;font-weight:400!important;padding:4.5px 4px!important;min-height:33px!important;height:33px!important;max-height:28px!important;background:var(--card);border:1px solid var(--border);border-radius:4px;justify-content:center;color:#7a8fa5!important;white-space:nowrap!important;width:100%!important;box-sizing:border-box!important;overflow:hidden!important}
     div[data-testid="stRadio"] div[role="radiogroup"] label:hover{border-color:#2563eb;color:#60a5fa!important}
     div[data-testid="stRadio"] div[role="radiogroup"] label[data-checked="true"]{border-color:#2563eb!important;background:#0c1528!important;color:#60a5fa!important}
     .fl{font-family:var(--jm);font-size:0.82rem;color:#c0ccd8;padding:0;margin:0}
     .fl .rw{display:flex;justify-content:space-between;align-items:center;padding:3.5px 0;border-bottom:1px solid #111a28}
     .fl .rw:last-child{border-bottom:none}
     .fl .lb{color:#5a7090;font-size:0.68rem;text-transform:uppercase;letter-spacing:0.02em}
-    .fl .vl{color:#e2e8f0;font-weight:600;text-align:right;font-size:0.82rem}
-    .fl .vl.g{color:#22c55e}.fl .vl.r{color:#ef4444}.fl .vl.b{color:#60a5fa}
+    .fl .vl{color:var(--txt);font-weight:600;text-align:right;font-size:0.82rem}
+    .fl .vl.g{color:#22c55e}.fl .vl.r{color:#ef4444}.fl .vl.b{color:#60a5fa}.fl .vl.y{color:#eab308}
     .fl .hd{font-size:0.58rem;text-transform:uppercase;letter-spacing:0.06em;color:#3d5068;border-bottom:1px solid #172033;padding:5px 0 2px 0;margin-top:4px;font-weight:600}
-    textarea{font-family:var(--jm)!important;font-size:0.7rem!important;background:#080d16!important;border-color:#1a2535!important;color:#c0ccd8!important}
     button[title="View fullscreen"]{display:none!important}
-    .stTextInput label,.stTextArea label{font-size:0.5rem!important;font-family:var(--jm)!important;color:#3d5068!important}
+    .stTextInput label{font-size:0.5rem!important;font-family:var(--jm)!important;color:#3d5068!important}
+    /* ← ADJUST LINK BUTTON SIZE: change padding and font-size here → */
+    .stLinkButton>a{font-family:var(--jm)!important;font-size:0.58rem!important;font-weight:600!important;padding:8px 6px!important;min-height:0!important;border-radius:5px!important;text-align:center!important}
 </style>
 """,unsafe_allow_html=True)
 
 # ── FETCH ──
 ticker=st.session_state.tk
 try: d=fetch(ticker)
-except Exception as e: st.error(f"Error: {e}"); st.stop()
-
+except Exception as e: st.error(f"Error: {e}");st.stop()
+tech=fetch_technicals(ticker)
 rec=d.get("rec","—");rec_clean=rec.replace("_"," ")
 if rec in ["BUY","STRONG_BUY","STRONGBUY","OUTPERFORM"]: bc="#22c55e";bbg="rgba(34,197,94,0.15)"
 elif rec in ["SELL","UNDERPERFORM","STRONG_SELL","STRONGSELL"]: bc="#ef4444";bbg="rgba(239,68,68,0.15)"
 else: bc="#eab308";bbg="rgba(234,179,8,0.15)"
+yf_options=f"https://finance.yahoo.com/quote/{ticker}/options/"
+yf_analysis=f"https://sg.finance.yahoo.com/quote/{ticker}/analysis/"
+twitter_url=f"https://x.com/search?q=%23{ticker}&src=typed_query&f=live"
 
-# ══ TITLE — big pudge, text shifted right ══
-st.markdown(f"""
-<div style="display:flex;align-items:center;gap:0;padding:0 0 2px 0;">
-    <img src="{PUDGE}" style="width:80px;height:80px;filter:drop-shadow(0 0 10px rgba(220,38,38,0.6));flex-shrink:0;" />
-    <h1 style="margin:0;padding-left:20px;font-size:3rem;font-weight:800;font-family:var(--jm);
-        background:linear-gradient(90deg,#ef4444 0%,#f97316 40%,#eab308 100%);
-        -webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:0.05em;line-height:1;">
-        MATUMBRO QUANT</h1>
-</div>
-""",unsafe_allow_html=True)
+# ══════════ TITLE + SEARCH ══════════
+# The header uses the SAME column ratios as the main layout so logo/price auto-align with chart edges.
+# ← COL_RATIOS: single source of truth for all column widths. Change here and everything aligns. →
+COL_WL = 0.55   # ← watchlist column width
+COL_CHART = 5.5  # ← chart column width
+COL_F = 1.5      # ← fundamental (3rd) column width
+COL_T = 1.5      # ← technical (4th) column width
 
-# ══ HEADER — aligned with main columns ══
-hw,hc,hf,ht=st.columns([0.55,5.45,2.0,2.0])
+# Title row: raigor+title on left, search bar spans col3+col4 width on right
+t1,t2=st.columns([COL_WL + COL_CHART, COL_F + COL_T])
+with t1:
+    st.markdown(f"""
+    <div style="display:flex;align-items:center;gap:0;padding:0;">
+        <img src="{RAIGOR}" style="width:80px;height:80px;filter:drop-shadow(0 0 10px rgba(180,120,40,0.6));flex-shrink:0;" />
+        <h1 style="margin:0;padding-left:16px;font-size:3rem;font-weight:800;font-family:var(--jm);
+            background:linear-gradient(90deg,#ef4444 0%,#f97316 40%,#eab308 100%);
+            -webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:0.05em;line-height:1;">
+            MATUMBRO QUANT</h1>
+    </div>""",unsafe_allow_html=True)
+with t2:
+    # ← SPACER ABOVE SEARCH BAR: adjust height to move search bar up/down →
+    st.markdown('<div style="height:45px;"></div>',unsafe_allow_html=True)
+    # Search bar now spans full width of col3+col4 (no max-width restriction)
+    sv=st.text_input("s",placeholder="US ticker → Enter",key="srch",on_change=_sr_cb,label_visibility="collapsed")
+    # Version label below search bar
+    st.markdown('<div style="font-family:var(--jm);font-size:0.45rem;font-style:italic;color:#3d5068;text-align:right;margin-top:-6px;">Ver. 0.12 Alpha build</div>',unsafe_allow_html=True)
+    if sv and len(sv)>=1:
+        q=sv.upper().strip()
+        matches=[t for t in US_TOP if t.startswith(q) and t!=q][:5]
+        if matches:
+            st.markdown(f'<div style="font-family:var(--jm);font-size:0.55rem;color:#60a5fa;margin-top:-6px;">{"  ·  ".join(matches)}</div>',unsafe_allow_html=True)
+
+# ← THIS IS THE HORIZONTAL DIVIDER LINE →
+st.markdown('<div style="border-bottom:2px solid #1e293b;margin:4px 0 0 0;"></div>',unsafe_allow_html=True)
+
+# ← SPACER BELOW DIVIDER: adjust height to push all content down →
+st.markdown('<div style="height:35px;"></div>',unsafe_allow_html=True)
+
+# ══════════ STOCK HEADER — uses same column ratios so logo/price auto-align with chart ══════════
+hw,hc,hf,ht=st.columns([COL_WL, COL_CHART, COL_F, COL_T])
 lg=get_logo(ticker)
 chg_c="#22c55e" if d["chg"]>=0 else "#ef4444"
 chg_bg="rgba(34,197,94,0.1)" if d["chg"]>=0 else "rgba(239,68,68,0.1)"
@@ -204,93 +307,125 @@ cstr=f"{cs}{d['chg']:.2f} ({cs}{d['chg_pct']*100:.2f}%)" if d["price"] else ""
 
 with hw: st.write("")
 with hc:
+    # Logo + name left-aligned to column edge = chart left edge (auto-aligned via same column)
+    # Price right-aligned to column edge = chart right edge (auto-aligned via justify-content:space-between)
     st.markdown(f"""
     <div style="display:flex;align-items:center;justify-content:space-between;padding:0 0 2px 0;">
-        <div style="display:flex;align-items:center;gap:10px;padding-left:4px;">
+        <div style="display:flex;align-items:center;gap:10px;">
             <img src="{lg}" style="width:42px;height:42px;border-radius:8px;background:#fff;padding:2px;" onerror="this.style.display='none'" />
-            <span style="font-family:var(--sg);font-size:1.8rem;font-weight:800;color:#f1f5f9;line-height:1;">{d['name']}</span>
-            <span style="font-family:var(--jm);font-size:0.95rem;color:#64748b;font-weight:500;">{ticker} · {d['sector']}</span>
-            <span style="font-family:var(--jm);font-size:0.95rem;font-weight:800;
-                color:{bc};background:{bbg};padding:3px 14px;border-radius:5px;
-                border:1px solid {bc}40;">{rec_clean}</span>
+            <div>
+                <div style="font-family:var(--sg);font-size:1.45rem;font-weight:800;color:#f1f5f9;line-height:1;">{d['name']}</div>
+                <div style="font-family:var(--jm);font-size:0.85rem;color:#64748b;margin-top:2px;">
+                    {ticker} · {d['sector']}
+                    <!-- ← ADJUST STRONG BUY BADGE: change margin-left to shift, padding for size → -->
+                    <span style="font-size:0.85rem;font-weight:800;color:{bc};background:{bbg};padding:2px 10px;border-radius:4px;border:1px solid {bc}40;margin-left:8px;">{rec_clean}</span>
+                </div>
+            </div>
         </div>
         <div style="display:flex;align-items:baseline;gap:10px;">
             <span style="font-family:var(--jm);font-size:1.5rem;font-weight:700;color:#f1f5f9;">{ps}</span>
             <span style="font-family:var(--jm);font-size:0.9rem;font-weight:700;color:{chg_c};background:{chg_bg};padding:3px 10px;border-radius:4px;">{cstr}</span>
         </div>
-    </div>
-    """,unsafe_allow_html=True)
+    </div>""",unsafe_allow_html=True)
 with hf: st.write("")
-with ht:
-    st.text_input("s",placeholder="Any ticker → Enter",key="srch",on_change=_sr_cb,label_visibility="collapsed")
+with ht: st.write("")
 
-# ══ MAIN ══
-wl,cc,fc,tc=st.columns([0.55,5.45,2.0,2.0])
+# ← GAP BETWEEN STOCK HEADER AND CHART →
+st.markdown('<div style="height:30px;"></div>',unsafe_allow_html=True)
 
+# ══════════ MAIN 4-COL LAYOUT — uses same COL_RATIOS so chart aligns with header ══════════
+# ← ADJUST COLUMN WIDTHS: change COL_WL, COL_CHART, COL_F, COL_T at the top (single source of truth) →
+# ← ADJUST GAP BETWEEN ALL COLUMNS: change gap value in CSS "div[data-testid="stHorizontalBlock"]{gap:0.6rem}" →
+wl,cc2,fc,tc=st.columns([COL_WL, COL_CHART, COL_F, COL_T])
+
+# ──── WATCHLIST: two groups (stocks + index) with gap between ────
 with wl:
-    wl_labels=[f"${t}" for t in QUICK_TICKERS]
-    cur=f"${ticker}" if ticker in QUICK_TICKERS else None
-    idx=wl_labels.index(cur) if cur in wl_labels else 0
-    st.radio("w",wl_labels,index=idx,key="wl_radio",on_change=_wl_cb,label_visibility="collapsed")
+    stk_labels=[f"${t}" for t in QUICK_STOCKS]
+    cur_stk=f"${ticker}" if ticker in QUICK_STOCKS else None
+    idx_stk=stk_labels.index(cur_stk) if cur_stk and cur_stk in stk_labels else 0
+    st.radio("w",stk_labels,index=idx_stk,key="wl_radio",on_change=_wl_cb,label_visibility="collapsed")
+    # ← ADJUST GAP BETWEEN STOCK AND INDEX WATCHLIST: change height →
+    st.markdown('<div style="height:25px;"></div>',unsafe_allow_html=True)
+    idx_labels=[f"${t}" for t in QUICK_INDEX]
+    cur_idx=f"${ticker}" if ticker in QUICK_INDEX else None
+    idx_idx=idx_labels.index(cur_idx) if cur_idx and cur_idx in idx_labels else 0
+    st.radio("wi",idx_labels,index=idx_idx,key="wl_idx_radio",on_change=_wl_idx_cb,label_visibility="collapsed")
 
-with cc:
-    ch=f"""<div style="border-radius:6px;overflow:hidden;border:1px solid #1a2535;">
+# ──── CHART + OPTIONS ────
+with cc2:
+    ch=f"""<div style="border-radius:6px;overflow:hidden;border:1px solid var(--border);">
     <div style="height:556px;">
     <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
     {{"autosize":true,"symbol":"{ticker}","interval":"D","timezone":"Asia/Singapore","theme":"dark","style":"1",
-    "locale":"en","backgroundColor":"rgba(13,21,32,1)","gridColor":"rgba(26,37,53,0.5)",
+    "locale":"en","backgroundColor":"rgba(10,15,26,1)","gridColor":"rgba(26,37,53,0.5)",
     "allow_symbol_change":false,"hide_top_toolbar":false,"hide_legend":false,"save_image":false,
     "calendar":false,"hide_volume":false,"support_host":"https://www.tradingview.com",
     "studies":["STD;SMA","STD;RSI"]}}
     </script></div></div>"""
     st.components.v1.html(ch,height=571)
-    st.markdown('<div style="font-family:var(--jm);font-size:0.48rem;text-transform:uppercase;letter-spacing:0.08em;color:#3d5068;border-bottom:1px solid #172033;padding-bottom:1px;margin:3px 0 2px 0;">⚡ Options Flow</div>',unsafe_allow_html=True)
+    st.markdown(f'<div style="font-family:var(--jm);font-size:0.6rem;text-transform:uppercase;letter-spacing:0.08em;color:#3d5068;padding-bottom:10px;margin:10px 0 2px 0;">⚡ Options Flow · <a href="{yf_options}" target="_blank" style="color:#3b82f6;text-decoration:none;">Open Yahoo Finance ↗</a></div>',unsafe_allow_html=True)
+    st.markdown('<div style="height:20px;"></div>',unsafe_allow_html=True)
     osumm,ounu=fetch_opts(ticker)
     if osumm:
         o1,o2,o3,o4=st.columns(4)
-        o1.metric("Call Vol",f"{osumm['cv']:,}"); o2.metric("Put Vol",f"{osumm['pv']:,}")
-        o3.metric("P/C Ratio",f"{osumm['pcr']:.2f}"); o4.metric("🚨 Unusual",str(osumm["unc"]))
+        o1.metric("Call Vol",f"{osumm['cv']:,}");o2.metric("Put Vol",f"{osumm['pv']:,}")
+        o3.metric("P/C Ratio",f"{osumm['pcr']:.2f}");o4.metric("🚨 Unusual",str(osumm["unc"]))
         if ounu is not None and len(ounu)>0:
             tbl="<table class='ot'><tr><th>Type</th><th>Strike</th><th>Exp</th><th>Vol</th><th>OI</th><th>V/OI</th><th>IV</th><th></th></tr>"
             for _,r in ounu.iterrows():
-                tc2="ca" if r["T"]=="CALL" else "pu"; fl="🔥" if r["voi"]>5 else "⚠️"
+                tc2="ca" if r["T"]=="CALL" else "pu";fl="🔥" if r["voi"]>5 else "⚠️"
                 tbl+=f"<tr><td class='{tc2}'>{r['T']}</td><td>${r['K']:.0f}</td><td>{r['exp']}</td><td>{r['vol']:,}</td><td>{r['oi']:,}</td><td class='fl'>{r['voi']:.1f}x</td><td>{r['iv']}%</td><td>{fl}</td></tr>"
-            tbl+="</table>"; st.markdown(tbl,unsafe_allow_html=True)
+            tbl+="</table>";st.markdown(tbl,unsafe_allow_html=True)
         else: st.caption("No unusual activity")
     else: st.caption("Options: refresh if not loading")
 
-# ──── F COLUMN ────
+# ──── F COLUMN: Earnings → Twitter → Valuation → EPS → Margins → Cash Flow ────
 with fc:
     def fr(l,v,c=""): return f'<div class="rw"><span class="lb">{l}</span><span class="vl{" "+c if c else ""}">{v}</span></div>'
+
+    # EARNINGS BOX
     ed=d.get("earn_date")
     if ed:
         da=(ed-date_type.today()).days
         ct="📢 TODAY" if da==0 else (f"{da} DAYS AWAY" if da>0 else f"{abs(da)}D AGO")
         ec="#60a5fa" if da>0 else "#f97316"
-        st.markdown(f"""<div style="background:linear-gradient(135deg,#0c1528,#131a2e);border:1px solid #2563eb;border-radius:8px;padding:10px 14px;margin-bottom:6px;text-align:center;">
+        ed_str=ed.strftime("%d/%m/%Y")
+        st.markdown(f"""<div style="background:linear-gradient(135deg,#0c1528,#131a2e);border:1px solid #2563eb;border-radius:8px;padding:10px 14px;text-align:center;">
         <div style="font-family:var(--jm);font-size:0.55rem;text-transform:uppercase;letter-spacing:0.1em;color:#3b82f6;margin-bottom:4px;">📅 NEXT EARNINGS</div>
-        <div style="font-family:var(--jm);font-size:1.6rem;font-weight:800;color:#f1f5f9;line-height:1.1;">{ed.strftime('%b %d, %Y')}</div>
+        <div style="font-family:var(--jm);font-size:1.6rem;font-weight:800;color:#f1f5f9;line-height:1.1;">{ed_str}</div>
         <div style="font-family:var(--jm);font-size:1rem;font-weight:700;color:{ec};margin-top:4px;">⏰ {ct}</div>
         </div>""",unsafe_allow_html=True)
     else:
-        st.markdown("""<div style="background:#0c1528;border:1px solid #1e293b;border-radius:8px;padding:10px;margin-bottom:6px;text-align:center;">
+        st.markdown("""<div style="background:#0c1528;border:1px solid #1e293b;border-radius:8px;padding:10px;text-align:center;">
         <div style="font-family:var(--jm);font-size:0.55rem;text-transform:uppercase;color:#3d5068;">📅 NEXT EARNINGS</div>
-        <div style="font-family:var(--jm);font-size:1.2rem;font-weight:700;color:#4a6080;margin-top:4px;">TBD</div></div>""",unsafe_allow_html=True)
+        <div style="font-family:var(--jm);font-size:1.2rem;font-weight:700;color:var(--dim);margin-top:4px;">TBD</div></div>""",unsafe_allow_html=True)
+
+    # 35px gap → Twitter button
+    st.markdown('<div style="height:35px;"></div>',unsafe_allow_html=True)
+    st.link_button(f"🐦  #{ticker} on X / Twitter", twitter_url, use_container_width=True)
+
+    # 20px gap → Valuation
+    st.markdown('<div style="height:20px;"></div>',unsafe_allow_html=True)
+
     h='<div class="fl">'
     h+='<div class="hd">📊 Valuation</div>'
-    h+=fr("Market Cap",fmt(d.get("mcap"),"$",1))
-    h+=fr("Trailing P/E",fmt(d.get("pe_t"),"x"))
-    h+=fr("Forward P/E",fmt(d.get("pe_f"),"x"))
-    h+=fr("PEG Ratio",fmt(d.get("peg"),"x"))
-    h+=fr("P/S Ratio",fmt(d.get("ps"),"x"))
-    h+=fr("P/B Ratio",fmt(d.get("pb"),"x"))
+    
+    # P/E headline ratio
+    h+=fr("P/E",fmt(d.get("pe"),"x"))
+    h+=fr("Forward P/E (NTM Est)",fmt(d.get("pe_f"),"x"))
     h+=fr("EV/EBITDA",fmt(d.get("ev_ebitda"),"x"))
+    h+=fr("PEG Ratio",fmt(d.get("peg"),"x"))
+    # Beta moved here — yfinance beta is 5-year monthly regression vs S&P 500
+    h+=fr("5yr Beta (Monthly)",f"{d['beta']:.2f}" if d.get("beta") else "—")
+
     h+='<div class="hd">💵 EPS</div>'
-    h+=fr("EPS Trailing",f"${d['eps_t']:.2f}" if d.get("eps_t") else "—")
-    h+=fr("EPS Forward",f"${d['eps_f']:.2f}" if d.get("eps_f") else "—")
+    # TTM = trailing twelve months, NTM = next twelve months consensus estimate
+    h+=fr("EPS Trailing (TTM)",f"${d['eps_t']:.2f}" if d.get("eps_t") else "—")
+    h+=fr("EPS Forward (NTM Est)",f"${d['eps_f']:.2f}" if d.get("eps_f") else "—")
     eg=None
     if d.get("eps_t") and d.get("eps_f") and d["eps_t"]>0: eg=(d["eps_f"]-d["eps_t"])/abs(d["eps_t"])
     h+=fr("EPS Growth",f"{eg*100:+.1f}%" if eg is not None else "—","g" if eg and eg>0 else ("r" if eg and eg<0 else ""))
+
     h+='<div class="hd">📈 Margins & Growth</div>'
     h+=fr("Revenue Growth",fmt(d.get("rev_g"),"%",1),"g" if d.get("rev_g") and d["rev_g"]>0 else "")
     h+=fr("Gross Margin",fmt(d.get("gm"),"%",1))
@@ -298,24 +433,127 @@ with fc:
     h+=fr("Net Margin",fmt(d.get("pm"),"%",1))
     h+=fr("ROE",fmt(d.get("roe"),"%",1))
     h+=fr("ROA",fmt(d.get("roa"),"%",1))
+
+    h+='<div class="hd">💰 Cash Flow</div>'
+    h+=fr("Free Cash Flow",fmt(d.get("fcf"),"$",1))
+    h+=fr("FCF Yield",fmt(d.get("fcf_y"),"%",1),"g" if d.get("fcf_y") and d["fcf_y"]>0.03 else "")
     h+='</div>'
     st.markdown(h,unsafe_allow_html=True)
 
-# ──── T COLUMN ────
+# ──── T COLUMN: Price Target → Yahoo Analysis → Price Context → Technicals ────
 with tc:
     def tr2(l,v,c=""): return f'<div class="rw"><span class="lb">{l}</span><span class="vl{" "+c if c else ""}">{v}</span></div>'
+
+    # PRICE TARGET SLIDER
+    tl=d.get("tgt_low") or 0;tm=d.get("tgt_mean") or 0;th2=d.get("tgt_high") or 0;cp=d.get("price") or 0
+    if th2>0 and tl>0 and th2>tl:
+        rng=th2-tl
+        cp_pct=max(0,min(100,((cp-tl)/rng)*100))
+        tm_pct=max(0,min(100,((tm-tl)/rng)*100))
+        na_count=d.get("n_a") or "—"
+        st.markdown(f"""
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 10px;">
+            <div style="font-family:var(--jm);font-size:0.5rem;text-transform:uppercase;color:var(--dim);margin-bottom:6px;">🎯 Price Target · {na_count} analysts</div>
+            <div style="position:relative;height:36px;margin:8px 0;">
+                <div style="position:absolute;top:16px;left:0;right:0;height:3px;background:#1e293b;border-radius:2px;"></div>
+                <div style="position:absolute;top:16px;left:0;width:{cp_pct}%;height:3px;background:linear-gradient(90deg,#3b82f6,#60a5fa);border-radius:2px;"></div>
+                <div style="position:absolute;top:8px;left:{tm_pct}%;transform:translateX(-50%);text-align:center;z-index:2;">
+                    <div style="font-family:var(--jm);font-size:0.72rem;font-weight:700;color:#60a5fa;background:var(--card);padding:1px 6px;border-radius:3px;border:1px solid #3b82f6;">${tm:,.0f}</div>
+                    <div style="font-family:var(--jm);font-size:0.4rem;color:#3b82f6;">Avg</div>
+                </div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-family:var(--jm);">
+                <span style="font-size:0.6rem;color:#ef4444;">${tl:,.0f} <span style="font-size:0.4rem;color:var(--dim);">Low</span></span>
+                <span style="font-size:0.6rem;color:var(--txt);">Current ${cp:,.0f}</span>
+                <span style="font-size:0.6rem;color:#22c55e;">${th2:,.0f} <span style="font-size:0.4rem;color:var(--dim);">High</span></span>
+            </div>
+        </div>""",unsafe_allow_html=True)
+    else:
+        st.caption("Price targets N/A")
+
+    # ← ADJUST SPACING BETWEEN PRICE TARGET AND YAHOO ANALYSIS BUTTON →
+    st.markdown('<div style="height:35px;"></div>',unsafe_allow_html=True)
+
+    # Yahoo Finance Analysis link button (same size as Twitter button)
+    # ← ADJUST BUTTON: size controlled by .stLinkButton>a in CSS above →
+    st.link_button(f"📊  {ticker} Analysis · Yahoo Finance", yf_analysis, use_container_width=True)
+
+    # ← 30px GAP BETWEEN YAHOO ANALYSIS BUTTON AND LYNCH SCREENER →
+    st.markdown('<div style="height:19px;"></div>',unsafe_allow_html=True)
+
+    # ──── PETER LYNCH SCREENER ────
+    # Each criterion shows ✅ green if met, ❌ red if not
+    def lynch_row(label, value_str, passes):
+        icon = "✅" if passes else "❌"
+        c = "g" if passes else "r"
+        return f'<div class="rw"><span class="lb">{icon} {label}</span><span class="vl {c}">{value_str}</span></div>'
+
+    pe_t_val = d.get("pe_t")
+    pe_f_val = d.get("pe_f")
+    de_val = d.get("de")  # yfinance returns as percentage (e.g. 35.0 = 35%)
+    peg_val = d.get("peg")
+    mcap_val = d.get("mcap")
+    # EPS growth: use implied growth from trailing→forward
+    eg_val = eg  # already calculated above in F column scope — recalculate here
+    eg_val2 = None
+    if d.get("eps_t") and d.get("eps_f") and d["eps_t"] > 0:
+        eg_val2 = (d["eps_f"] - d["eps_t"]) / abs(d["eps_t"])
+
+    lh = '<div class="fl">'
+    lh += '<div class="hd">🔍 Peter Lynch Screener</div>'
+    # 1. Trailing P/E < 25
+    pe_pass = pe_t_val is not None and pe_t_val < 25
+    lh += lynch_row("Trailing P/E < 25", fmt(pe_t_val, "x") if pe_t_val else "—", pe_pass)
+    # 2. Forward P/E < 15
+    pef_pass = pe_f_val is not None and pe_f_val < 15
+    lh += lynch_row("Forward P/E < 15", fmt(pe_f_val, "x") if pe_f_val else "—", pef_pass)
+    # 3. Debt/Equity < 35%
+    de_pass = de_val is not None and de_val < 35
+    lh += lynch_row("Debt/Equity < 35%", f"{de_val:.1f}%" if de_val is not None else "—", de_pass)
+    # 4. EPS Growth > 15%
+    eg_pass = eg_val2 is not None and eg_val2 > 0.15
+    lh += lynch_row("EPS Growth > 15%", f"{eg_val2*100:+.1f}%" if eg_val2 is not None else "—", eg_pass)
+    # 5. PEG Ratio < 2
+    peg_pass = peg_val is not None and peg_val < 2
+    lh += lynch_row("PEG Ratio < 2", fmt(peg_val, "x") if peg_val else "—", peg_pass)
+    # 6. Market Cap > $5B
+    mcap_pass = mcap_val is not None and mcap_val > 5e9
+    lh += lynch_row("Market Cap > $5B", fmt(mcap_val, "$", 1) if mcap_val else "—", mcap_pass)
+    # Summary: count passes
+    total_pass = sum([pe_pass, pef_pass, de_pass, eg_pass, peg_pass, mcap_pass])
+    summary_c = "g" if total_pass >= 5 else ("y" if total_pass >= 3 else "r")
+    lh += f'<div class="rw"><span class="lb" style="font-weight:700;">SCORE</span><span class="vl {summary_c}">{total_pass}/6</span></div>'
+    lh += '</div>'
+    st.markdown(lh, unsafe_allow_html=True)
+
+    st.markdown('<div style="height:20px;"></div>',unsafe_allow_html=True)
+
+    # PRICE CONTEXT — includes 20 MA now, Beta removed (moved to Valuation)
     h2='<div class="fl">'
     h2+='<div class="hd">📦 Price Context</div>'
     h2+=tr2("52W High",fmt(d.get("52h"),"p"))
     h2+=tr2("52W Low",fmt(d.get("52l"),"p"))
-    h2+=tr2("50D MA",fmt(d.get("50ma"),"p"))
-    h2+=tr2("200D MA",fmt(d.get("200ma"),"p"))
-    h2+=tr2("Beta",f"{d['beta']:.2f}" if d.get("beta") else "—")
+    #h2+=tr2("20D MA",fmt(tech.get("20ma"),"p") if tech.get("20ma") else "—")
+    #h2+=tr2("50D MA",fmt(d.get("50ma"),"p"))
+    #h2+=tr2("200D MA",fmt(d.get("200ma"),"p"))
+
     h2+='<div class="hd">📊 Volume</div>'
     h2+=tr2("Volume",fmt(d.get("vol"),"$",0))
     vr=d["vol"]/d["avg_vol"] if d.get("vol") and d.get("avg_vol") and d["avg_vol"]>0 else None
     h2+=tr2("Vol/Avg",f"{vr:.2f}x" if vr else "—","g" if vr and vr>1.5 else ("r" if vr and vr<0.5 else ""))
-    h2+='<div class="hd">📐 MA Position</div>'
+
+    h2+='<div class="hd">📐 Technicals</div>'
+    # RSI
+    rsi_val=tech.get("rsi")
+    if rsi_val is not None:
+        rsi_c="r" if rsi_val>70 else ("g" if rsi_val<30 else ("y" if rsi_val>60 else ""))
+        h2+=tr2("RSI (14)",f"{rsi_val}",rsi_c)
+    else: h2+=tr2("RSI (14)","—")
+
+    # vs MAs
+    if d.get("price") and tech.get("20ma"):
+        d20=(d["price"]-tech["20ma"])/tech["20ma"]*100
+        h2+=tr2("vs 20D MA",f"{d20:+.1f}%","g" if d20>0 else "r")
     if d.get("price") and d.get("50ma"):
         d50=(d["price"]-d["50ma"])/d["50ma"]*100
         h2+=tr2("vs 50D MA",f"{d50:+.1f}%","g" if d50>0 else "r")
@@ -325,30 +563,6 @@ with tc:
     if d.get("price") and d.get("52h"):
         off=(d["price"]-d["52h"])/d["52h"]*100
         h2+=tr2("Off 52W High",f"{off:.1f}%","r" if off<-10 else "")
-    h2+='<div class="hd">🎯 Analyst Consensus</div>'
-    h2+=tr2("Rating",rec_clean,"g" if "BUY" in rec else ("r" if "SELL" in rec else ""))
-    h2+=tr2("# Analysts",str(d.get("n_a") or "—"))
-    h2+=tr2("Target Mean",fmt(d.get("tgt_mean"),"p"))
-    h2+=tr2("Target High",fmt(d.get("tgt_high"),"p"))
-    h2+=tr2("Target Low",fmt(d.get("tgt_low"),"p"))
-    if d.get("price") and d.get("tgt_mean"):
-        up=(d["tgt_mean"]-d["price"])/d["price"]
-        h2+=tr2("Implied Upside",f"{up*100:+.1f}%","g" if up>0 else "r")
-    h2+='<div class="hd">🛒 Entry Levels</div>'
-    ls=[];p=d.get("price")
-    if p:
-        for lb,k in [("50D MA","50ma"),("200D MA","200ma"),("52W Low","52l")]:
-            v2=d.get(k)
-            if v2 and v2<p: ls.append((lb,v2,(p-v2)/p*100))
-        ls.sort(key=lambda x:x[1],reverse=True)
-    cx=["g","b",""]
-    for i2,(lb,v2,pct) in enumerate(ls[:3]):
-        h2+=tr2(lb,f"${v2:,.2f} (-{pct:.1f}%)",cx[min(i2,2)])
-    if not ls: h2+=tr2("Status","At/below key MAs","")
+    h2+=tr2("Short % Float",fmt(d.get("short_pct"),"%",1))
     h2+='</div>'
     st.markdown(h2,unsafe_allow_html=True)
-
-    # PASTE BOX right under T column
-    st.markdown('<div style="font-family:var(--jm);font-size:0.52rem;text-transform:uppercase;letter-spacing:0.06em;color:#3d5068;border-bottom:1px solid #172033;padding-bottom:1px;margin:6px 0 2px 0;">📝 Paste Box</div>',unsafe_allow_html=True)
-    intel=st.text_area("i",placeholder="Paste tweets, Patreon, articles for AI analysis...",height=100,label_visibility="collapsed",key="intel")
-    if intel: st.caption(f"📄 {len(intel.split())} words · Phase 3 ready")
